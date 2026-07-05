@@ -38,7 +38,11 @@ deploy:
     - ims-ews-builder
   resource_group: production
   script:
-    - echo "=== Pre-deploy checks ==="
+    - echo "=== Pre-deploy: stopping old md-viewer container ==="
+    - docker stop md-viewer 2>/dev/null || true
+    - docker rm md-viewer 2>/dev/null || true
+
+    - echo "=== Port check ==="
     # Check if port is occupied by something other than our own container
     - |
       PORT_OWNER=$(docker ps --filter "publish=${APP_PORT}" --format "{{.Names}}" 2>/dev/null || true)
@@ -46,10 +50,6 @@ deploy:
         echo "ERROR: Port ${APP_PORT} is occupied by container: $PORT_OWNER"
         exit 1
       fi
-
-    - echo "=== Stopping old md-viewer container (if exists) ==="
-    - docker stop md-viewer 2>/dev/null || true
-    - docker rm md-viewer 2>/dev/null || true
 
     - echo "=== Saving previous image for rollback ==="
     - docker tag ${IMAGE_NAME}:latest ${IMAGE_NAME}:previous 2>/dev/null || true
