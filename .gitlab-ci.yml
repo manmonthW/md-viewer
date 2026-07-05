@@ -1,0 +1,108 @@
+variables:
+  APP_NAME: "md-editor"
+  APP_PORT: "9022"
+  CONTAINER_PORT: "80"
+  IMAGE_NAME: "md-editor"
+  CONTAINER_NAME: "md-editor"
+  NETWORK_NAME: "ims-gateway"
+
+workflow:
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+
+stages:
+  - build
+  - deploy
+  - rollback
+
+# ──────────────────────────────────────────────
+# Build Stage
+# ──────────────────────────────────────────────
+build:
+  stage: build
+  tags:
+    - ims-ews-builder
+  script:
+    - echo "=== Building Docker image ==="
+    - docker build -t ${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA} -t ${IMAGE_NAME}:latest .
+    - echo "=== Build complete ==="
+    - docker images | grep ${IMAGE_NAME}
+
+# ──────────────────────────────────────────────
+# Deploy Stage
+# ──────────────────────────────────────────────
+deploy:
+  stage: deploy
+  tags:
+    - ims-ews-builder
+  resource_group: production
+  script:
+    - echo "=== Pre-deploy checks ==="
+    # Check if port is occupied by something other than our own container
+    - |
+      PORT_OWNER=$(docker ps --filter "publish=${APP_PORT}" --format "{{.Names}}" 2>/dev/null || true)
+      if [ -n "$PORT_OWNER" ] && [ "$PORT_OWNER" != "${CONTAINER_NAME}" ]; then
+        echo "ERROR: Port ${APP_PORT} is occupied by container: $PORT_OWNER"
+        exit 1
+      fi
+
+    - echo "=== Stopping old md-viewer container (if exists) ==="
+    - docker stop md-viewer 2>/dev/null || true
+    - docker rm md-viewer 2>/dev/null || true
+
+    - echo "=== Saving previous image for rollback ==="
+    - docker tag ${IMAGE_NAME}:latest ${IMAGE_NAME}:previous 2>/dev/null || true
+
+    - echo "=== Stopping old md-editor container (if exists) ==="
+    - docker stop ${CONTAINER_NAME} 2>/dev/null || true
+    - docker rm ${CONTAINER_NAME} 2>/dev/null || true
+
+    - echo "=== Starting new container ==="
+    - |
+      docker run -d \
+        --name ${CONTAINER_NAME} \
+        --network ${NETWORK_NAME} \
+        -p ${APP_PORT}:${CONTAINER_PORT} \
+        --restart unless-stopped \
+        ${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA}
+
+    - echo "=== Health check ==="
+    - sleep 3
+    - |
+      for i in 1 2 3 4 5; do
+        if curl -fsS http://127.0.0.1:${APP_PORT}/health > /dev/null 2>&1; then
+          echo "Health check passed! (attempt $i)"
+          exit 0
+        fi
+        echo "Health check attempt $i failed, retrying in 3s..."
+        sleep 3
+      done
+      echo "ERROR: Health check failed after 5 attempts"
+      echo "=== Container logs ==="
+      docker logs ${CONTAINER_NAME} --tail 50
+      exit 1
+
+# ──────────────────────────────────────────────
+# Rollback (Manual)
+# ──────────────────────────────────────────────
+rollback:
+  stage: rollback
+  tags:
+    - ims-ews-builder
+  resource_group: production
+  when: manual
+  script:
+    - echo "=== Rolling back to previous version ==="
+    - docker stop ${CONTAINER_NAME} 2>/dev/null || true
+    - docker rm ${CONTAINER_NAME} 2>/dev/null || true
+    - |
+      docker run -d \
+        --name ${CONTAINER_NAME} \
+        --network ${NETWORK_NAME} \
+        -p ${APP_PORT}:${CONTAINER_PORT} \
+        --restart unless-stopped \
+        ${IMAGE_NAME}:previous
+    - sleep 3
+    - curl -fsS http://127.0.0.1:${APP_PORT}/health
+    - echo "=== Rollback complete ==="
