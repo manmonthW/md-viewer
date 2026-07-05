@@ -2,7 +2,9 @@ FROM nginx:alpine
 
 # Copy static files
 COPY markdown-editor.html /usr/share/nginx/html/index.html
+COPY eds-theme.css /usr/share/nginx/html/eds-theme.css
 COPY i18n.js /usr/share/nginx/html/i18n.js
+COPY eds/ /usr/share/nginx/html/eds/
 COPY public/ /usr/share/nginx/html/public/
 
 # Copy nginx config
