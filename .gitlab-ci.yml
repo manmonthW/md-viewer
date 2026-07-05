@@ -16,9 +16,6 @@ stages:
   - deploy
   - rollback
 
-# ──────────────────────────────────────────────
-# Build Stage
-# ──────────────────────────────────────────────
 build:
   stage: build
   tags:
@@ -29,35 +26,27 @@ build:
     - echo "=== Build complete ==="
     - docker images | grep ${IMAGE_NAME}
 
-# ──────────────────────────────────────────────
-# Deploy Stage
-# ──────────────────────────────────────────────
 deploy:
   stage: deploy
   tags:
     - ims-ews-builder
   resource_group: production
   script:
-    - echo "=== Pre-deploy: stopping old md-viewer container ==="
+    - echo "=== Stopping old md-viewer container ==="
     - docker stop md-viewer 2>/dev/null || true
     - docker rm md-viewer 2>/dev/null || true
-
     - echo "=== Port check ==="
-    # Check if port is occupied by something other than our own container
     - |
       PORT_OWNER=$(docker ps --filter "publish=${APP_PORT}" --format "{{.Names}}" 2>/dev/null || true)
       if [ -n "$PORT_OWNER" ] && [ "$PORT_OWNER" != "${CONTAINER_NAME}" ]; then
         echo "ERROR: Port ${APP_PORT} is occupied by container: $PORT_OWNER"
         exit 1
       fi
-
     - echo "=== Saving previous image for rollback ==="
     - docker tag ${IMAGE_NAME}:latest ${IMAGE_NAME}:previous 2>/dev/null || true
-
-    - echo "=== Stopping old md-editor container (if exists) ==="
+    - echo "=== Stopping old md-editor container ==="
     - docker stop ${CONTAINER_NAME} 2>/dev/null || true
     - docker rm ${CONTAINER_NAME} 2>/dev/null || true
-
     - echo "=== Starting new container ==="
     - |
       docker run -d \
@@ -66,7 +55,6 @@ deploy:
         -p ${APP_PORT}:${CONTAINER_PORT} \
         --restart unless-stopped \
         ${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA}
-
     - echo "=== Health check ==="
     - sleep 3
     - |
@@ -79,13 +67,9 @@ deploy:
         sleep 3
       done
       echo "ERROR: Health check failed after 5 attempts"
-      echo "=== Container logs ==="
       docker logs ${CONTAINER_NAME} --tail 50
       exit 1
 
-# ──────────────────────────────────────────────
-# Rollback (Manual)
-# ──────────────────────────────────────────────
 rollback:
   stage: rollback
   tags:
